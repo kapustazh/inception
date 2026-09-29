@@ -1,0 +1,30 @@
+# Environment
+srcs/.env
+.env
+
+# Secrets
+secrets/
+srcs/secrets/
+
+# Persistent data
+data/
+*/data/
+
+# Certificates / keys
+*.crt
+*.key
+*.pem
+
+# Logs
+*.log
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary / draft stuff
+draft/
+tmp/
