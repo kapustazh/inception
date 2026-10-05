@@ -1,0 +1,10 @@
+services:
+  mariadb:
+    build: ./requirements/mariadb
+    container_name: mariadb
+    image: mariadb:0.1
+  
+    environment:
+        MARIADB_DATABSE: ${MARIADB_DATABSE}
+        MARIADB_WP_USER: ${MARIADB_WP_USER}
+        MARIDB_WP_USER_PASSOWRD: ${MARIDB_WP_USER_PASSOWRD}
