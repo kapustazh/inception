@@ -1,10 +1,162 @@
+name: inception
+
+x-common-service: &common-service
+  init: true
+  restart: always
+  networks:
+    - backend
+
 services:
   mariadb:
-    build: ./requirements/mariadb
-    container_name: mariadb
+    <<: *common-service
+    build:
+      context: .
+      dockerfile: requirements/mariadb/Dockerfile
     image: mariadb:0.1
-  
+    container_name: mariadb
     environment:
-        MARIADB_DATABSE: ${MARIADB_DATABSE}
-        MARIADB_WP_USER: ${MARIADB_WP_USER}
-        MARIDB_WP_USER_PASSOWRD: ${MARIDB_WP_USER_PASSOWRD}
+      - MARIADB_DATABASE
+      - MARIADB_ADMIN_USER
+      - MARIADB_WP_USER
+      - MARIADB_ROOT_PASSWORD_FILE
+      - MARIADB_ADMIN_PASSWORD_FILE
+      - MARIADB_WP_USER_PASSWORD_FILE
+    secrets:
+      - mariadb_root_pass
+      - mariadb_admin_pass
+      - mariadb_wp_user_pass
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$(cat /run/secrets/mariadb_root_pass)\" mariadb -uroot --batch --skip-column-names -e 'SELECT 1'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+
+  wordpress:
+    <<: *common-service
+    build:
+      context: .
+      dockerfile: requirements/wordpress/Dockerfile
+    image: wordpress:0.1
+    container_name: wordpress
+    environment:
+      - DOMAIN_NAME
+      - WP_TITLE
+      - WP_DB_HOST
+      - WP_DB_NAME
+      - WP_DB_USER
+      - WP_DB_PASSWORD_FILE
+      - WP_ADMIN_USER
+      - WP_ADMIN_EMAIL
+      - WP_ADMIN_PASSWORD_FILE
+      - WP_USER
+      - WP_USER_EMAIL
+      - WP_USER_PASSWORD_FILE
+    secrets:
+      - mariadb_wp_user_pass
+      - wp_admin_pass
+      - wp_user_pass
+    volumes:
+      - wordpress_data:/var/www/html
+    depends_on:
+      mariadb:
+        condition: service_healthy
+
+  nginx:
+    <<: *common-service
+    build:
+      context: .
+      dockerfile: requirements/nginx/Dockerfile
+    image: nginx:0.1
+    environment:
+      - DOMAIN_NAME
+    container_name: nginx
+    ports:
+      - "443:443"
+    secrets:
+      - source: nginx_cert
+        target: /etc/nginx/ssl/inception.crt
+      - source: nginx_key
+        target: /etc/nginx/ssl/inception.key
+    volumes:
+      - wordpress_data:/var/www/html:ro
+      - nginx_logs:/var/log/inception
+      - goaccess_reports:/var/www/goaccess:ro
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /run/nginx.pid && kill -0 $$(cat /run/nginx.pid)"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    depends_on:
+      - wordpress
+
+  goaccess:
+    <<: *common-service
+    build:
+      context: .
+      dockerfile: requirements/bonus/goaccess/Dockerfile
+    image: goaccess:0.1
+    container_name: goaccess
+    environment:
+      - DOMAIN_NAME
+    volumes:
+      - nginx_logs:/logs:ro
+      - goaccess_reports:/reports
+    depends_on:
+      nginx:
+        condition: service_healthy
+
+  static-website:
+    <<: *common-service
+    build: ./requirements/bonus/static-website
+    image: static-website:0.1
+    container_name: static-website
+
+volumes:
+  mariadb_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_DIR:?run through make}/mariadb
+  wordpress_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_DIR:?run through make}/wordpress
+
+  nginx_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_DIR:?run through make}/nginx-logs
+  goaccess_reports:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_DIR:?run through make}/goaccess
+
+networks:
+  backend:
+    driver: bridge
+
+secrets:
+  mariadb_root_pass:
+    file: ${MARIADB_ROOT_PASSWORD_HOST_FILE}
+  mariadb_admin_pass:
+    file: ${MARIADB_ADMIN_PASSWORD_HOST_FILE}
+  mariadb_wp_user_pass:
+    file: ${MARIADB_WP_USER_PASSWORD_HOST_FILE}
+  wp_admin_pass:
+    file: ${WP_ADMIN_PASSWORD_HOST_FILE}
+  wp_user_pass:
+    file: ${WP_USER_PASSWORD_HOST_FILE}
+  nginx_cert:
+    file: ${NGINX_SSL_CERTIFICATE_HOST_FILE}
+  nginx_key:
+    file: ${NGINX_SSL_CERTIFICATE_KEY_HOST_FILE}
