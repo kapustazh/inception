@@ -28,3 +28,7 @@ data/
 # Temporary / draft stuff
 draft/
 tmp/
+*.txt
+
+# Tests
+tests/
