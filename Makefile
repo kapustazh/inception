@@ -1,16 +1,14 @@
 LOGIN    := mnestere
 DOMAIN   := $(shell sed -n 's/^DOMAIN_NAME=//p' srcs/.env 2>/dev/null)
 DATA_DIR := /home/$(LOGIN)/data
+DOCKER_DATA_ROOT := $(DATA_DIR)/docker
 CERT_DIR := secrets/certs
 COMPOSE  := docker compose -f srcs/docker-compose.yml
 SECRETS  := db_root_password db_admin_password db_wp_user_password wp_admin_password wp_user_password
 
-export DATA_DIR
-
 all: up
 
-up: check-env secrets cert
-	@mkdir -p $(DATA_DIR)/mariadb $(DATA_DIR)/wordpress $(DATA_DIR)/nginx-logs $(DATA_DIR)/goaccess
+up: check-env check-storage secrets cert
 	@for host in "$(DOMAIN)" "stats.$(DOMAIN)" "me.$(DOMAIN)"; do \
 		getent hosts "$$host" >/dev/null || echo "WARNING: add '127.0.0.1 $$host' to /etc/hosts"; \
 	done
@@ -27,6 +25,10 @@ secrets:
 check-env:
 	@test -s srcs/.env || { echo "Copy srcs/.env.example to srcs/.env first" >&2; exit 1; }
 	@test -n "$(DOMAIN)" || { echo "Set DOMAIN_NAME in srcs/.env" >&2; exit 1; }
+
+# Plain named volumes must live under the subject's required host directory.
+check-storage:
+	@test "$$(docker info --format '{{.DockerRootDir}}')" = "$(DOCKER_DATA_ROOT)" || { echo "Set Docker data-root to $(DOCKER_DATA_ROOT); see DEV_DOC.md" >&2; exit 1; }
 
 cert: check-env
 	@mkdir -p $(CERT_DIR)
@@ -59,13 +61,12 @@ ps:
 clean:
 	@$(COMPOSE) down --rmi all
 
-# removes containers, images, volumes and the host data (db + site files)
+# Removes this project's containers, images and named volumes (all application data).
 fclean:
 	@$(COMPOSE) down --rmi all -v
-	@docker run --rm -v $(DATA_DIR):/data debian:bookworm-slim sh -c 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +'
 
 re:
 	@$(MAKE) fclean
 	@$(MAKE) up
 
-.PHONY: all up check-env secrets cert down stop start logs ps clean fclean re
+.PHONY: all up check-env check-storage secrets cert down stop start logs ps clean fclean re

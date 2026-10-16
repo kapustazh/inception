@@ -20,6 +20,8 @@ The stack includes two bonuses: a static portfolio and a GoAccess traffic dashbo
 
 Run the project inside a Linux VM with Docker Engine, Docker Compose V2, GNU Make and OpenSSL installed. Your account must be able to run Docker commands. The initial build requires internet access.
 
+Configure Docker's `data-root` as `/home/mnestere/data/docker` before the first start; see [VM storage setup](DEV_DOC.md#docker-storage) for the steps. This places ordinary named volumes under the host directory required by the subject.
+
 From the repository root, create the local configuration:
 
 ```sh
@@ -43,7 +45,7 @@ make
 make ps
 ```
 
-`make` generates missing passwords and a self-signed TLS certificate, prepares the data directories, builds the images and starts the containers. Existing passwords and application data are preserved. Once WordPress finishes its first installation, open the URLs above and accept the self-signed certificate. WordPress login names are in `srcs/.env`; passwords are in the corresponding files under `secrets/`.
+`make` generates missing passwords and a self-signed TLS certificate, builds the images and starts the containers. Existing passwords and application data are preserved. Once WordPress finishes its first installation, open the URLs above and accept the self-signed certificate. WordPress login names are in `srcs/.env`; passwords are in the corresponding files under `secrets/`.
 
 | Command | Effect |
 |---|---|
@@ -81,14 +83,14 @@ NGINX publishes the stack's only host port and accepts TLS 1.2 and 1.3. It serve
 
 GoAccess reads the NGINX access log and writes an HTML report. NGINX serves that report on the statistics hostname and proxies its WebSocket connection for live updates. Requests to the dashboard are excluded from the access log.
 
-Four named volumes retain data under `/home/mnestere/data`:
+Four ordinary named volumes retain data under `/home/mnestere/data/docker/volumes/<volume-name>/_data`:
 
-| Volume | Host directory | Access |
+| Volume (Compose prefix: `inception_`) | Contents | Access |
 |---|---|---|
-| `mariadb_data` | `mariadb/` | MariaDB reads and writes database files |
-| `wordpress_data` | `wordpress/` | WordPress reads and writes; NGINX reads |
-| `nginx_logs` | `nginx-logs/` | NGINX writes; GoAccess reads |
-| `goaccess_reports` | `goaccess/` | GoAccess writes; NGINX reads |
+| `mariadb_data` | Database files | MariaDB reads and writes database files |
+| `wordpress_data` | WordPress files | WordPress reads and writes; NGINX reads |
+| `nginx_logs` | Access logs | NGINX writes; GoAccess reads |
+| `goaccess_reports` | Traffic report | GoAccess writes; NGINX reads |
 
 These files survive container recreation and `make down`. GoAccess rebuilds its report from the retained logs when it starts. Portfolio files are included in its image.
 
@@ -102,6 +104,7 @@ The repository contains:
 - `srcs/scripts/entrypoint-lib.sh`: shared environment validation and secret-reading helpers.
 - `srcs/docker-compose.yml`: service definitions, dependencies, network, volumes and secret mounts.
 - `srcs/.env.example`: a template for the local configuration.
+- `srcs/docker-daemon.json.example`: the VM's Docker storage setting.
 - `Makefile`: build, startup, certificate generation and cleanup commands.
 
 Startup scripts configure each service and use `exec` to run its daemon in the foreground. Compose provides process reaping through `init: true` and restarts containers with `restart: always`. WordPress starts after MariaDB passes an authenticated health check. Database initialization and WordPress installation run only when their persisted state is absent.
@@ -120,11 +123,12 @@ A bridge network gives containers separate network interfaces and lets them reso
 
 ### Docker Volumes vs Bind Mounts
 
-Named volumes are Docker resources that persist independently of containers. Direct bind mounts attach host paths in service definitions. Here, services reference named volumes, whose local-driver options bind them to specific directories under `/home/mnestere/data`. This makes both the volume lifecycle and the storage location explicit.
+Named volumes are created and managed by Docker and persist independently of containers. Bind mounts map an existing host directory into a container. The application volumes here use Docker's default local driver without bind options. Docker's `data-root` setting places their files under `/home/mnestere/data/docker`, rather than choosing host paths in Compose.
 
 ## Resources
 
 - [Dockerfile reference](https://docs.docker.com/reference/dockerfile/) — image build instructions.
+- [Docker daemon configuration](https://docs.docker.com/engine/daemon/) — the `data-root` storage setting.
 - [Compose file reference](https://docs.docker.com/reference/compose-file/) — services, networks, volumes and secrets.
 - [NGINX documentation](https://nginx.org/en/docs/) — TLS, FastCGI and reverse proxy configuration.
 - [WP-CLI handbook](https://make.wordpress.org/cli/handbook/) — WordPress installation and account management.

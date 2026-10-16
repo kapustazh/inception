@@ -116,30 +116,9 @@ services:
 
 volumes:
   mariadb_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${DATA_DIR:?run through make}/mariadb
   wordpress_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${DATA_DIR:?run through make}/wordpress
-
   nginx_logs:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${DATA_DIR:?run through make}/nginx-logs
   goaccess_reports:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${DATA_DIR:?run through make}/goaccess
 
 networks:
   backend:
