@@ -4,15 +4,56 @@
 
 ## Description
 
-A small web infrastructure run with Docker Compose inside a virtual machine. Five containers, each built from its own Dockerfile on `debian:bookworm-slim`:
+Inception is a 42 system administration project about building and operating a Docker infrastructure inside a virtual machine. It hosts a WordPress website behind HTTPS, with separate containers for the web server, PHP application and database. The project covers image builds, service networking, secrets and persistent storage.
 
-- **nginx**: the only entry point, HTTPS on port 443 (TLSv1.2/1.3 only).
-- **wordpress**: WordPress with php-fpm (no web server inside).
-- **mariadb**: the database (nothing else inside).
-- **goaccess** (chosen-service bonus): live traffic statistics from NGINX access logs, served at `https://stats.mnestere.42.fr`.
-- **static-website** (static-site bonus): a personal portfolio, served at `https://me.mnestere.42.fr`.
+The stack includes two bonuses: a static portfolio and a GoAccess traffic dashboard. Each of the five services has its own Dockerfile based on `debian:bookworm-slim`.
 
-Four named volumes store the database, WordPress files, access logs and traffic reports under `/home/mnestere/data`. Passwords are Docker secrets, other settings come from `srcs/.env`.
+| Service | Role | Access |
+|---|---|---|
+| NGINX | Terminates TLS and routes requests to the websites | HTTPS on port 443 |
+| WordPress + PHP-FPM | Runs WordPress and its administration panel | [Website](https://mnestere.42.fr) · [Administration](https://mnestere.42.fr/wp-admin/) |
+| MariaDB | Stores WordPress content, settings and accounts | Internal database connection |
+| Static website | Serves the HTML, CSS and JavaScript portfolio | [Portfolio](https://me.mnestere.42.fr) |
+| GoAccess | Reports requests, response codes and traffic from NGINX logs | [Traffic dashboard](https://stats.mnestere.42.fr) |
+
+## Instructions
+
+Run the project inside a Linux VM with Docker Engine, Docker Compose V2, GNU Make and OpenSSL installed. Your account must be able to run Docker commands. The initial build requires internet access.
+
+From the repository root, create the local configuration:
+
+```sh
+cp srcs/.env.example srcs/.env
+```
+
+Review `srcs/.env` before starting. It contains the domain, database and WordPress account names, and paths to password and certificate files. Keep an existing `.env` when updating the project.
+
+For access inside the VM, add this line to `/etc/hosts` with administrative privileges:
+
+```text
+127.0.0.1 mnestere.42.fr me.mnestere.42.fr stats.mnestere.42.fr
+```
+
+For access from another machine, configure its hosts file with the VM's reachable IP address and ensure port 443 is reachable.
+
+Build and start the stack:
+
+```sh
+make
+make ps
+```
+
+`make` generates missing passwords and a self-signed TLS certificate, prepares the data directories, builds the images and starts the containers. Existing passwords and application data are preserved. Once WordPress finishes its first installation, open the URLs above and accept the self-signed certificate. WordPress login names are in `srcs/.env`; passwords are in the corresponding files under `secrets/`.
+
+| Command | Effect |
+|---|---|
+| `make logs` | Follow the service logs |
+| `make stop` / `make start` | Stop or resume existing containers |
+| `make down` | Remove containers and the network; keep stored data |
+| `make clean` | Also remove service images; keep stored data |
+| `make fclean` / `make re` | Delete all stored application data; `re` then builds a fresh installation |
+
+See [USER_DOC.md](USER_DOC.md) for daily operation and credentials, and [DEV_DOC.md](DEV_DOC.md) for configuration, rebuilds and troubleshooting.
 
 ## Architecture
 
@@ -36,71 +77,58 @@ flowchart TB
     browser -->|"HTTPS · only published port: 443"| nginx
 ```
 
-NGINX routes all three hostnames. It serves WordPress's static files and the GoAccess report directly from read-only volume mounts, and forwards PHP requests and portfolio requests to their containers. Passwords and TLS files are mounted into their consuming containers as Compose secrets.
+NGINX publishes the stack's only host port and accepts TLS 1.2 and 1.3. It serves WordPress static files, sends PHP requests to PHP-FPM, and proxies portfolio requests to the static website container.
 
-The traffic-report pipeline uses files shared through named volumes:
+GoAccess reads the NGINX access log and writes an HTML report. NGINX serves that report on the statistics hostname and proxies its WebSocket connection for live updates. Requests to the dashboard are excluded from the access log.
 
-```mermaid
-flowchart LR
-    traffic["NGINX<br/>website traffic"] --> logs[("nginx_logs<br/>access.log")]
-    logs -->|"Read-only input"| analyzer["GoAccess"]
-    analyzer -->|"Generate HTML"| reports[("goaccess_reports<br/>index.html")]
-    reports -->|"Read-only mount"| dashboard["NGINX serves<br/>stats.mnestere.42.fr"]
-```
+Four named volumes retain data under `/home/mnestere/data`:
 
-| Named volume | Host directory | Container access |
+| Volume | Host directory | Access |
 |---|---|---|
-| `mariadb_data` | `/home/mnestere/data/mariadb` | MariaDB reads and writes database files |
-| `wordpress_data` | `/home/mnestere/data/wordpress` | WordPress reads/writes; NGINX reads site files |
-| `nginx_logs` | `/home/mnestere/data/nginx-logs` | NGINX writes access logs; GoAccess reads them |
-| `goaccess_reports` | `/home/mnestere/data/goaccess` | GoAccess writes the report; NGINX serves it |
+| `mariadb_data` | `mariadb/` | MariaDB reads and writes database files |
+| `wordpress_data` | `wordpress/` | WordPress reads and writes; NGINX reads |
+| `nginx_logs` | `nginx-logs/` | NGINX writes; GoAccess reads |
+| `goaccess_reports` | `goaccess/` | GoAccess writes; NGINX reads |
 
-The portfolio files are included in its image and need no persistent volume. Statistics-page requests are excluded from the access log.
-
-## Instructions
-
-1. Add the domain to the hosts file: `127.0.0.1 mnestere.42.fr stats.mnestere.42.fr me.mnestere.42.fr` in `/etc/hosts`.
-2. Copy `srcs/.env.example` to `srcs/.env` and adjust it.
-3. Run `make`. It generates missing secrets and the TLS certificate, builds the images and starts the stack.
-4. Open `https://mnestere.42.fr`, `https://me.mnestere.42.fr` or `https://stats.mnestere.42.fr` (accept the self-signed certificate).
-
-Other targets: `make down`, `make stop`, `make start`, `make logs`, `make ps`, `make clean`, `make fclean`, `make re`. See `USER_DOC.md` and `DEV_DOC.md`.
+These files survive container recreation and `make down`. GoAccess rebuilds its report from the retained logs when it starts. Portfolio files are included in its image.
 
 ## Project description
 
-Docker is used to package each service with its dependencies into an image, and Compose describes how the containers, network, volumes and secrets fit together. Sources: one folder per service in `srcs/requirements/` (Dockerfile, config, entrypoint script), plus `srcs/docker-compose.yml` and the `Makefile`.
+Docker packages each service and its dependencies into a separate image. Compose defines how those containers share a network, storage and secrets; the Makefile prepares local files and runs Compose.
 
-Main design choices: Debian base image, one process per container, `init: true` so PID 1 reaps zombies, entrypoint scripts that configure then `exec` the daemon in the foreground, MariaDB healthcheck so WordPress starts only when the database is ready.
+The repository contains:
+
+- `srcs/requirements/`: service Dockerfiles, configuration files and startup scripts; bonus services are under `bonus/`.
+- `srcs/scripts/entrypoint-lib.sh`: shared environment validation and secret-reading helpers.
+- `srcs/docker-compose.yml`: service definitions, dependencies, network, volumes and secret mounts.
+- `srcs/.env.example`: a template for the local configuration.
+- `Makefile`: build, startup, certificate generation and cleanup commands.
+
+Startup scripts configure each service and use `exec` to run its daemon in the foreground. Compose provides process reaping through `init: true` and restarts containers with `restart: always`. WordPress starts after MariaDB passes an authenticated health check. Database initialization and WordPress installation run only when their persisted state is absent.
 
 ### Virtual Machines vs Docker
-A VM emulates a whole machine with its own kernel, so it is heavy and slow to start. A container shares the host kernel and isolates only processes and the filesystem, so it is light and starts in seconds. The VM here is the host that runs Docker.
+
+A VM runs its own guest kernel; containers share the host kernel and isolate application processes, filesystems and networking. Here, the VM provides the Linux host, and Docker separates the services within it.
 
 ### Secrets vs Environment Variables
-Environment variables are visible via `docker inspect` and in the process environment, and are easy to leak into logs. Docker secrets are mounted as files in `/run/secrets` and only in the containers that need them. Here `.env` holds non-sensitive settings and file paths, passwords are secrets.
+
+Environment variables configure domains, account names and file paths. Passwords are read from files mounted only into the services that use them. This keeps password values out of the Compose environment, where they would be visible through container inspection. Local Compose secrets use files on the VM; those source files and `.env` are ignored by Git.
 
 ### Docker Network vs Host Network
-On a Docker bridge network the containers get their own addresses, reach each other by service name, and only published ports are reachable from outside. With host networking the container shares the host's network stack, with no isolation. It is forbidden by the subject.
+
+A bridge network gives containers separate network interfaces and lets them resolve each other by service name. Host networking shares the host's network stack. This project uses the `inception_backend` bridge and publishes only NGINX port 443; application and database connections use internal service addresses.
 
 ### Docker Volumes vs Bind Mounts
-Named volumes are created and managed by Docker, with a lifecycle independent of the containers. A bind mount maps an arbitrary host path directly. The subject requires named volumes, so they are configured to store their data in `/home/mnestere/data`.
+
+Named volumes are Docker resources that persist independently of containers. Direct bind mounts attach host paths in service definitions. Here, services reference named volumes, whose local-driver options bind them to specific directories under `/home/mnestere/data`. This makes both the volume lifecycle and the storage location explicit.
 
 ## Resources
 
-- Docker docs: https://docs.docker.com/ (Compose file reference, secrets, volumes, networking)
-- Dockerfile best practices: https://docs.docker.com/build/building/best-practices/
-- NGINX docs: https://nginx.org/en/docs/
-- WP-CLI handbook: https://make.wordpress.org/cli/handbook/
-- GoAccess manual: https://goaccess.io/man
-- MariaDB knowledge base: https://mariadb.com/kb/en/
+- [Dockerfile reference](https://docs.docker.com/reference/dockerfile/) — image build instructions.
+- [Compose file reference](https://docs.docker.com/reference/compose-file/) — services, networks, volumes and secrets.
+- [NGINX documentation](https://nginx.org/en/docs/) — TLS, FastCGI and reverse proxy configuration.
+- [WP-CLI handbook](https://make.wordpress.org/cli/handbook/) — WordPress installation and account management.
+- [MariaDB documentation](https://mariadb.com/kb/en/) — database initialization, accounts and permissions.
+- [GoAccess manual](https://goaccess.io/man) — log formats and live HTML reports.
 
-AI use: Codex assisted with reviewing the VM and reference project, fixing argument handling and NGINX domain configuration, and improving build and cleanup behavior. AI also assisted with the GoAccess bonus integration, documentation updates and verification commands.
-
-## Chosen-service bonus: GoAccess
-
-GoAccess helps inspect website traffic and troubleshoot HTTP errors. Its image installs the Debian package on `debian:bookworm-slim`; there is no Node.js runtime. It runs in the foreground using its built-in live-report mode. NGINX serves the generated HTML and proxies the live WebSocket through HTTPS, with only port 443 published. The statistics host does not log its own requests.
-
-Access logs and reports use named volumes stored at `/home/mnestere/data/nginx-logs` and `/home/mnestere/data/goaccess`. GoAccess mounts logs read-only; NGINX mounts reports read-only. Raw logs survive container recreation and are reprocessed at startup. GoAccess fulfills the service-of-your-choice item; the portfolio fulfills the static-site item. Redis, FTP and Adminer remain unimplemented.
-
-## Static-site bonus: portfolio
-
-The personal portfolio is built with HTML, CSS and JavaScript. Its dedicated Debian-based image installs NGINX and serves the static files directly. The main NGINX proxies `me.DOMAIN_NAME` to the container's internal port 8080. There is no PHP, Node.js or build step. Files are included in the image, so this service does not need a persistent volume.
+AI assistance: Codex helped review and update service configuration, shared entrypoint helpers, MariaDB bootstrap SQL and WordPress password handling. It also assisted with bonus-service integration, integration checks, and the README, user and developer documentation.
