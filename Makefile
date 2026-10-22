@@ -9,7 +9,7 @@ SECRETS  := db_root_password db_admin_password db_wp_user_password wp_admin_pass
 all: up
 
 up: check-env check-storage secrets cert
-	@for host in "$(DOMAIN)" "stats.$(DOMAIN)" "me.$(DOMAIN)"; do \
+	@for host in "$(DOMAIN)" "stats.$(DOMAIN)" "me.$(DOMAIN)" "adminer.$(DOMAIN)"; do \
 		getent hosts "$$host" >/dev/null || echo "WARNING: add '127.0.0.1 $$host' to /etc/hosts"; \
 	done
 	@$(COMPOSE) up -d --build
@@ -36,9 +36,10 @@ cert: check-env
 	    ! openssl x509 -in $(CERT_DIR)/inception_nginx.crt -noout -checkhost "$(DOMAIN)" >/dev/null 2>&1 || \
 	    ! openssl x509 -in $(CERT_DIR)/inception_nginx.crt -noout -checkhost "stats.$(DOMAIN)" >/dev/null 2>&1 || \
 	    ! openssl x509 -in $(CERT_DIR)/inception_nginx.crt -noout -checkhost "me.$(DOMAIN)" >/dev/null 2>&1 || \
+	    ! openssl x509 -in $(CERT_DIR)/inception_nginx.crt -noout -checkhost "adminer.$(DOMAIN)" >/dev/null 2>&1 || \
 	    ! openssl x509 -in $(CERT_DIR)/inception_nginx.crt -noout -checkend 0 >/dev/null 2>&1; then \
 		openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
-		-subj "/CN=$(DOMAIN)" -addext "subjectAltName=DNS:$(DOMAIN),DNS:stats.$(DOMAIN),DNS:me.$(DOMAIN)" \
+		-subj "/CN=$(DOMAIN)" -addext "subjectAltName=DNS:$(DOMAIN),DNS:stats.$(DOMAIN),DNS:me.$(DOMAIN),DNS:adminer.$(DOMAIN)" \
 		-keyout $(CERT_DIR)/inception_nginx.key -out $(CERT_DIR)/inception_nginx.crt || exit 1; \
 	fi
 	@chmod 600 $(CERT_DIR)/inception_nginx.key

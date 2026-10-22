@@ -76,4 +76,21 @@ http {
             proxy_set_header X-Forwarded-Proto $scheme;
         }
     }
+
+    server {
+        listen 443 ssl;
+        server_name adminer.${DOMAIN_NAME};
+        ssl_certificate /etc/nginx/ssl/inception.crt;
+        ssl_certificate_key /etc/nginx/ssl/inception.key;
+        ssl_protocols TLSv1.2 TLSv1.3;
+
+        resolver 127.0.0.11 valid=10s ipv6=off;
+        set $adminer http://adminer:8080;
+        location / {
+            proxy_pass $adminer;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+
 }
