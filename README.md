@@ -6,14 +6,17 @@
 
 Inception is a 42 system administration project about building and operating a Docker infrastructure inside a virtual machine. It hosts a WordPress website behind HTTPS, with separate containers for the web server, PHP application and database. The project covers image builds, service networking, secrets and persistent storage.
 
-The stack includes two bonuses: a static portfolio and a GoAccess traffic dashboard. Each of the five services has its own Dockerfile based on `debian:bookworm-slim`.
+The stack includes all five listed bonuses: Redis object caching, an FTP server, Adminer database administration, a static portfolio and a GoAccess traffic dashboard. Each of the eight services has its own Dockerfile based on `debian:bookworm-slim`.
 
 | Service | Role | Access |
 |---|---|---|
 | NGINX | Terminates TLS and routes requests to the websites | HTTPS on port 443 |
 | WordPress + PHP-FPM | Runs WordPress and its administration panel | [Website](https://mnestere.42.fr) · [Administration](https://mnestere.42.fr/wp-admin/) |
 | MariaDB | Stores WordPress content, settings and accounts | Internal database connection |
+| Redis | Required WordPress object cache | Internal connection on port 6379 |
+| Adminer | Database administration using MariaDB credentials | [Database administration](https://adminer.mnestere.42.fr) |
 | Static website | Serves the HTML, CSS and JavaScript portfolio | [Portfolio](https://me.mnestere.42.fr) |
+| FTP | Manages files in the WordPress volume using explicit TLS | Port 21; passive data ports 21100–21104 |
 | GoAccess | Reports requests, response codes and traffic from NGINX logs | [Traffic dashboard](https://stats.mnestere.42.fr) |
 
 ## Instructions
@@ -33,7 +36,7 @@ Review `srcs/.env` before starting. It contains the domain, database and WordPre
 For access inside the VM, add this line to `/etc/hosts` with administrative privileges:
 
 ```text
-127.0.0.1 mnestere.42.fr me.mnestere.42.fr stats.mnestere.42.fr
+127.0.0.1 mnestere.42.fr me.mnestere.42.fr stats.mnestere.42.fr adminer.mnestere.42.fr
 ```
 
 For access from another machine, configure its hosts file with the VM's reachable IP address and ensure port 443 is reachable.
@@ -55,6 +58,8 @@ make ps
 | `make clean` | Also remove service images; keep stored data |
 | `make fclean` / `make re` | Delete all stored application data; `re` then builds a fresh installation |
 
+For FTP, use explicit TLS on port 21 with passive mode, the `FTP_USER` login from `.env`, and `secrets/ftp_password.txt`. Set `FTP_PASV_ADDRESS` to the address reachable from your client.
+
 See [USER_DOC.md](USER_DOC.md) for daily operation and credentials, and [DEV_DOC.md](DEV_DOC.md) for configuration, rebuilds and troubleshooting.
 
 ## Architecture
@@ -62,24 +67,38 @@ See [USER_DOC.md](USER_DOC.md) for daily operation and credentials, and [DEV_DOC
 ```mermaid
 flowchart TB
     browser["Browser"]
+    ftp_client["FTP client"]
 
     subgraph vm["Virtual machine · Docker bridge: inception_backend"]
         nginx["NGINX<br/>HTTPS :443 · TLS 1.2 / 1.3"]
         wordpress["WordPress + PHP-FPM<br/>FastCGI :9000"]
         mariadb["MariaDB<br/>SQL :3306"]
+        redis["Redis<br/>Required object cache :6379"]
+        adminer["Adminer<br/>HTTP :8080"]
         portfolio["Static portfolio<br/>HTTP :8080"]
         goaccess["GoAccess<br/>WebSocket :7890"]
+        ftp["vsftpd<br/>Explicit FTP over TLS"]
+        files[("WordPress files<br/>wordpress_data")]
 
         nginx -->|"mnestere.42.fr · PHP requests"| wordpress
         wordpress -->|"Database queries"| mariadb
+        wordpress -->|"Cache reads and writes"| redis
+        wordpress -->|"Read and write"| files
+        ftp -->|"Read and write"| files
+        nginx -->|"Read-only files"| files
+        nginx -->|"adminer.mnestere.42.fr"| adminer
+        adminer -->|"Database administration"| mariadb
         nginx -->|"me.mnestere.42.fr"| portfolio
         nginx <-->|"stats.mnestere.42.fr/ws · live updates"| goaccess
     end
 
-    browser -->|"HTTPS · only published port: 443"| nginx
+    browser -->|"HTTPS :443"| nginx
+    ftp_client -->|"Explicit TLS :21 · passive data :21100-21104"| ftp
 ```
 
-NGINX publishes the stack's only host port and accepts TLS 1.2 and 1.3. It serves WordPress static files, sends PHP requests to PHP-FPM, and proxies portfolio requests to the static website container.
+NGINX serves all websites on HTTPS port 443 and accepts TLS 1.2 and 1.3. It serves WordPress static files, sends PHP requests to PHP-FPM, and proxies portfolio requests to the static website container.
+
+The FTP bonus additionally publishes port 21 and passive ports 21100–21104, as permitted for bonus services. It shares the WordPress file volume and requires encrypted login and data transfers.
 
 GoAccess reads the NGINX access log and writes an HTML report. NGINX serves that report on the statistics hostname and proxies its WebSocket connection for live updates. Requests to the dashboard are excluded from the access log.
 
@@ -88,11 +107,11 @@ Four ordinary named volumes retain data under `/home/mnestere/data/docker/volume
 | Volume (Compose prefix: `inception_`) | Contents | Access |
 |---|---|---|
 | `mariadb_data` | Database files | MariaDB reads and writes database files |
-| `wordpress_data` | WordPress files | WordPress reads and writes; NGINX reads |
+| `wordpress_data` | WordPress files | WordPress and FTP read and write; NGINX reads |
 | `nginx_logs` | Access logs | NGINX writes; GoAccess reads |
 | `goaccess_reports` | Traffic report | GoAccess writes; NGINX reads |
 
-These files survive container recreation and `make down`. GoAccess rebuilds its report from the retained logs when it starts. Portfolio files are included in its image.
+These files survive container recreation and `make down`. GoAccess rebuilds its report from the retained logs when it starts. Portfolio files are included in its image. Redis keeps a disposable cache in memory, bounded to 128 MB; entries are rebuilt from MariaDB after a restart. Adminer has no persistent application data.
 
 ## Project description
 
@@ -107,7 +126,7 @@ The repository contains:
 - `srcs/docker-daemon.json.example`: the VM's Docker storage setting.
 - `Makefile`: build, startup, certificate generation and cleanup commands.
 
-Startup scripts configure each service and use `exec` to run its daemon in the foreground. Compose provides process reaping through `init: true` and restarts containers with `restart: always`. WordPress starts after MariaDB passes an authenticated health check. Database initialization and WordPress installation run only when their persisted state is absent.
+Startup scripts configure each service and use `exec` to run its daemon in the foreground. Compose provides process reaping through `init: true` and restarts containers with `restart: always`. WordPress starts after MariaDB and Redis pass health checks. Its entrypoint verifies Redis connectivity, installs the bundled Redis Object Cache plugin and enables its drop-in for both new and existing sites. Redis is required: an outage causes WordPress requests to fail until Redis returns. Database initialization and WordPress installation run only when their persisted state is absent.
 
 ### Virtual Machines vs Docker
 
@@ -119,7 +138,7 @@ Environment variables configure domains, account names and file paths. Passwords
 
 ### Docker Network vs Host Network
 
-A bridge network gives containers separate network interfaces and lets them resolve each other by service name. Host networking shares the host's network stack. This project uses the `inception_backend` bridge and publishes only NGINX port 443; application and database connections use internal service addresses.
+A bridge network gives containers separate network interfaces and lets them resolve each other by service name. Host networking shares the host's network stack. This project uses the `inception_backend` bridge and publishes NGINX port 443 plus the FTP control and passive ports; database, cache and application connections remain internal.
 
 ### Docker Volumes vs Bind Mounts
 
@@ -133,6 +152,9 @@ Named volumes are created and managed by Docker and persist independently of con
 - [NGINX documentation](https://nginx.org/en/docs/) — TLS, FastCGI and reverse proxy configuration.
 - [WP-CLI handbook](https://make.wordpress.org/cli/handbook/) — WordPress installation and account management.
 - [MariaDB documentation](https://mariadb.com/kb/en/) — database initialization, accounts and permissions.
+- [Redis Object Cache configuration](https://github.com/rhubarbgroup/redis-cache) — WordPress cache configuration and failure behavior.
+- [Adminer](https://www.adminer.org/) — database administration and releases.
+- [vsftpd configuration manual](https://manpages.debian.org/bookworm/vsftpd/vsftpd.conf.5.en.html) — FTP accounts, TLS and passive connections.
 - [GoAccess manual](https://goaccess.io/man) — log formats and live HTML reports.
 
 AI assistance: Codex helped review and update service configuration, shared entrypoint helpers, MariaDB bootstrap SQL and WordPress password handling. It also assisted with bonus-service integration, integration checks, and the README, user and developer documentation.
