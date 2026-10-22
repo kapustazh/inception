@@ -54,15 +54,37 @@ services:
       - WP_USER
       - WP_USER_EMAIL
       - WP_USER_PASSWORD_FILE
+      - WP_REDIS_HOST
+      - WP_REDIS_PORT
     secrets:
       - mariadb_wp_user_pass
       - wp_admin_pass
       - wp_user_pass
     volumes:
       - wordpress_data:/var/www/html
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /run/php/php8.2-fpm.pid && kill -0 $$(cat /run/php/php8.2-fpm.pid) && runuser -u www-data -- wp --path=/var/www/html eval 'exit(wp_using_ext_object_cache() ? 0 : 1);' --quiet"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     depends_on:
       mariadb:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  redis:
+    <<: *common-service
+    build: ./requirements/bonus/redis
+    image: redis:0.1
+    container_name: redis
+    healthcheck:
+      test: ["CMD-SHELL", "test \"$$(redis-cli ping)\" = PONG"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+      start_period: 5s
 
   nginx:
     <<: *common-service
@@ -90,7 +112,8 @@ services:
       timeout: 2s
       retries: 15
     depends_on:
-      - wordpress
+      wordpress:
+        condition: service_healthy
 
   goaccess:
     <<: *common-service
