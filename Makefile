@@ -4,7 +4,7 @@ DATA_DIR := /home/$(LOGIN)/data
 DOCKER_DATA_ROOT := $(DATA_DIR)/docker
 CERT_DIR := secrets/certs
 COMPOSE  := docker compose -f srcs/docker-compose.yml
-SECRETS  := db_root_password db_admin_password db_wp_user_password wp_admin_password wp_user_password
+SECRETS  := db_root_password db_admin_password db_wp_user_password wp_admin_password wp_user_password ftp_password
 
 all: up
 

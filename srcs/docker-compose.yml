@@ -140,6 +140,38 @@ services:
       nginx:
         condition: service_healthy
 
+  ftp:
+    <<: *common-service
+    build:
+      context: .
+      dockerfile: requirements/bonus/ftp/Dockerfile
+    image: ftp:0.1
+    container_name: ftp
+    environment:
+      - FTP_USER
+      - FTP_PASSWORD_FILE
+      - FTP_PASV_ADDRESS
+    ports:
+      - "21:21"
+      - "21100-21104:21100-21104"
+    secrets:
+      - ftp_password
+      - source: nginx_cert
+        target: /etc/vsftpd/ssl/inception.crt
+      - source: nginx_key
+        target: /etc/vsftpd/ssl/inception.key
+    volumes:
+      - wordpress_data:/var/www/html
+    depends_on:
+      wordpress:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/21 && read -r -t 2 reply <&3 && [[ $$reply == 220* ]]"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
   static-website:
     <<: *common-service
     build: ./requirements/bonus/static-website
@@ -167,6 +199,8 @@ secrets:
     file: ${WP_ADMIN_PASSWORD_HOST_FILE}
   wp_user_pass:
     file: ${WP_USER_PASSWORD_HOST_FILE}
+  ftp_password:
+    file: ${FTP_PASSWORD_HOST_FILE}
   nginx_cert:
     file: ${NGINX_SSL_CERTIFICATE_HOST_FILE}
   nginx_key:
